@@ -21,5 +21,8 @@ export CCL_BCAST=double_tree
 export CCL_KVS_MODE=mpi
 export CCL_KVS_USE_MPI_RANKS=1
 
+# PVC Tile Hierarchy
+export ZE_FLAT_DEVICE_HIERARCHY=COMPOSITE
+
 # Run the torch based generate code
 mpiexec -n 6 python -m gpt_oss.generate /flare/AuroraGPT/model-weights/hub/models--openai--gpt-oss-120b/snapshots/4c0fa49a43c232dc2a1cae033ae1fb7961cf8220/original/
