@@ -49,14 +49,30 @@ class Checkpoint:
 
         self.tensor_name_to_file = tensor_name_to_file
 
-    def get(self, name: str) -> torch.Tensor:
+    def get(
+        self, name: str, rank: int | None = None, world_size: int | None = None
+    ) -> torch.Tensor:
         match PARAM_NAME_MAP.get(name, name):
             case (blocks_name, scales_name):
                 # MoE weights: are in block-based MXFP4 format
-                return self._get_mxfp4_tensor(blocks_name, scales_name, dtype=torch.bfloat16)
+                return self._get_mxfp4_tensor(
+                    blocks_name,
+                    scales_name,
+                    dtype=torch.bfloat16,
+                    rank=rank,
+                    world_size=world_size,
+                    name=name,
+                )
             case tensor_name:
                 # MoE biases and other weights
-                return self._get_tensor(tensor_name)
+                tensor = self._get_tensor(tensor_name)
+                if "mlp1_bias" in name and rank is not None and world_size is not None:
+                    # Shard mlp1_bias
+                    per_rank_slice = tensor.shape[1] // world_size
+                    tensor = tensor[
+                        :, rank * per_rank_slice : (rank + 1) * per_rank_slice
+                    ]
+                return tensor
 
     def _get_tensor(self, name: str) -> str:
         assert name in self.tensor_name_to_file, f"Tensor {name} not found in checkpoint."
@@ -72,6 +88,9 @@ class Checkpoint:
         *,
         dtype: torch.dtype = torch.bfloat16,
         rows_per_chunk: int = 16384 * 512,
+        rank: int | None = None,
+        world_size: int | None = None,
+        name: str | None = None,
     ) -> torch.Tensor:
         assert blocks_name in self.tensor_name_to_file, (
             f"Blocks tensor {blocks_name} not found in checkpoint."
@@ -82,6 +101,15 @@ class Checkpoint:
 
         blocks = self._get_tensor(blocks_name)
         scales = self._get_tensor(scales_name).to(torch.int32) - 127
+
+        if name and "mlp1_weight" in name and rank is not None and world_size is not None:
+            per_rank_slice = blocks.shape[1] // world_size
+            blocks = blocks[:, rank * per_rank_slice : (rank + 1) * per_rank_slice, :]
+            scales = scales[:, rank * per_rank_slice : (rank + 1) * per_rank_slice, :]
+        elif name and "mlp2_weight" in name and rank is not None and world_size is not None:
+            per_rank_slice = blocks.shape[2] // world_size
+            blocks = blocks[:, :, rank * per_rank_slice : (rank + 1) * per_rank_slice]
+            scales = scales[:, :, rank * per_rank_slice : (rank + 1) * per_rank_slice]
 
         assert blocks.shape[:-1] == scales.shape, (
             f"{blocks.shape=} does not match {scales.shape=}"

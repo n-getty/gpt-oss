@@ -35,7 +35,7 @@ def init_distributed() -> torch.device:
     if world_size > 1:
         x = torch.ones(1, device=device)
         dist.all_reduce(x)
-        torch.cuda.synchronize(device)
+        torch.xpu.synchronize(device)
 
     suppress_output(rank)
     return device

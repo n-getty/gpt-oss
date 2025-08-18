@@ -23,6 +23,29 @@ def main(args):
         case "vllm":
             from gpt_oss.vllm.token_generator import TokenGenerator as VLLMGenerator
             generator = VLLMGenerator(args.checkpoint, tensor_parallel_size=args.tensor_parallel_size)
+        case "torch-xpu":
+            import importlib.util
+            import gpt_oss
+            from pathlib import Path
+
+            gpt_oss_path = Path(gpt_oss.__file__).parent
+            utils_path = gpt_oss_path / "torch-xpu" / "utils.py"
+            model_path = gpt_oss_path / "torch-xpu" / "model.py"
+
+            utils_spec = importlib.util.spec_from_file_location(
+                "gpt_oss.torch_xpu.utils", utils_path
+            )
+            utils = importlib.util.module_from_spec(utils_spec)
+            utils_spec.loader.exec_module(utils)
+
+            model_spec = importlib.util.spec_from_file_location(
+                "gpt_oss.torch_xpu.model", model_path
+            )
+            model = importlib.util.module_from_spec(model_spec)
+            model_spec.loader.exec_module(model)
+
+            device = utils.init_distributed()
+            generator = model.TokenGenerator(args.checkpoint, device=device)
         case _:
             raise ValueError(f"Invalid backend: {args.backend}")
 
@@ -75,7 +98,7 @@ if __name__ == "__main__":
         metavar="BACKEND",
         type=str,
         default="torch",
-        choices=["triton", "torch", "vllm"],
+        choices=["triton", "torch", "vllm", "torch-xpu"],
         help="Inference backend",
     )
     parser.add_argument(
