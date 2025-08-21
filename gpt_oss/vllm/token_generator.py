@@ -2,10 +2,15 @@ from vllm import LLMEngine, EngineArgs, SamplingParams, TokensPrompt
 
 
 class TokenGenerator:
-    def __init__(self, model_path: str, tensor_parallel_size: int = 1):
+    def __init__(self, model_path: str, tensor_parallel_size: int = 1, device: str = "cuda"):
+        print(
+            f"Initializing vLLM with model: {model_path}, tensor_parallel_size: {tensor_parallel_size}, device: {device}"
+        )
         args = EngineArgs(
             model=model_path,
             tensor_parallel_size=tensor_parallel_size,
+            device=device,
+            enable_expert_parallel=True,
         )
         self.engine = LLMEngine.from_engine_args(args)
         self.request_id = 0

@@ -5,12 +5,8 @@ from dataclasses import dataclass
 
 import torch
 import torch.distributed as dist
-import intel_extension_for_pytorch as ipex
-import sys
-import os
-sys.path.insert(0, os.path.dirname(__file__))
 
-from weights import Checkpoint
+from gpt_oss.torch.weights import Checkpoint
 
 
 @dataclass
@@ -398,11 +394,6 @@ class Transformer(torch.nn.Module):
         if not isinstance(device, torch.device):
             device = torch.device(device)
 
-        print(f"Loading model on device: {device}")
-        if "xpu" in str(device):
-            print(f"Initial memory summary for device {torch.xpu.current_device()}:")
-            print(torch.xpu.memory_summary())
-
         config_path = os.path.join(path, "config.json")
         with open(config_path, "r") as f:
             json_config = json.load(f)
@@ -421,31 +412,31 @@ class Transformer(torch.nn.Module):
 
         checkpoint = Checkpoint(path, device)
 
-        if "xpu" in str(device):
-            print(
-                f"Memory summary before loading weights on device {torch.xpu.current_device()}:"
-            )
-            print(torch.xpu.memory_summary())
-
         for name, param in model.named_parameters():
-            if "mlp" in name:
-                loaded_tensor = checkpoint.get(
-                    name, rank=my_rank, world_size=world_size
-                )
-            else:
-                loaded_tensor = checkpoint.get(name)
+            loaded_tensor = checkpoint.get(name)
 
+            # Note: it would be more efficient to do sharding before upcasting from MXFP4,
+            # but for simplicity we do it after.
+            if "mlp1" in name:  # both weight and bias
+                loaded_tensor = loaded_tensor[
+                    :,
+                    my_rank * 2
+                    * per_rank_intermediate_size : (my_rank + 1) * 2
+                    * per_rank_intermediate_size,
+                    ...,
+                ]
+            elif "mlp2_weight" in name:  # only weight
+                loaded_tensor = loaded_tensor[
+                    ...,
+                    my_rank
+                    * per_rank_intermediate_size : (my_rank + 1)
+                    * per_rank_intermediate_size,
+                ]
             try:
                 param.data.copy_(loaded_tensor)
             except:
                 print(f"{name=} {param.data.shape=} {loaded_tensor.shape=}")
                 raise
-
-        if "xpu" in str(device):
-            print(
-                f"Memory summary after loading weights on device {torch.xpu.current_device()}:"
-            )
-            print(torch.xpu.memory_summary())
 
         return model
 
@@ -455,8 +446,6 @@ class TokenGenerator:
     def __init__(self, checkpoint: str, device: torch.device):
         self.device = device
         self.model = Transformer.from_checkpoint(checkpoint, device=self.device)
-        if "xpu" in str(self.device):
-            self.model = ipex.optimize(self.model, dtype=torch.bfloat16)
 
     @torch.inference_mode()
     def generate(self,
